@@ -1,0 +1,29 @@
+[project]
+name = "yugioh-scanner"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "easyocr>=1.7.2",
+    "opencv-python>=5.0.0.93",
+    "torch>=2.13.0",
+    "torchvision>=0.28.0",
+]
+
+[tool.uv]
+# EasyOCR depends on opencv-python-headless, which conflicts with
+# opencv-python (the full build with GUI support). This override
+# makes the headless requirement always evaluate to false.
+override-dependencies = [
+    "opencv-python-headless ; python_version < '0'",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
