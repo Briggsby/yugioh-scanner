@@ -9,23 +9,50 @@ import cv2
 import easyocr
 import numpy as np
 
+CARD_ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+CARD_ID_PATTERN = re.compile(r"^(\w+)-([A-Z]{2})(\d{3})$")
+
+DIGIT_TO_LETTER = str.maketrans("01৪568", "OIASEB")
+LETTER_TO_DIGIT = str.maketrans("OIASTEBZC", "014573870")
+
+OCR_SIMILAR = {
+    frozenset("1IL"): 0.2,
+    frozenset("0OQC"): 0.2,
+    frozenset("5S"): 0.2,
+    frozenset("8B"): 0.2,
+    frozenset("6G"): 0.3,
+    frozenset("2Z"): 0.3,
+    frozenset("UV"): 0.3,
+}
+MAX_OCR_DISTANCE = 1.5
+
+MOTION_THRESHOLD = 30.0
+SETTLE_THRESHOLD = 2.0
+STABLE_FRAMES_REQUIRED = 10
+
+OUTPUT_FILE = "output.txt"
+CARDS_DATA_FILE = Path(__file__).parent / "data" / "cards.json"
+CARD_SETS_DATA_FILE = Path(__file__).parent / "data" / "cardsets.json"
+
 reader = easyocr.Reader(["en"], gpu=True)
+
 
 @lru_cache()
 def get_valid_set_codes() -> list[str]:
-    with open(Path(__file__).parent / "cardsets.json", "r") as f:
+    with open(CARD_SETS_DATA_FILE, "r") as f:
         sets = json.load(f)
     return {set["set_code"] for set in sets}
 
 
 @lru_cache()
 def cards_by_set_code() -> list[str]:
-    with open(Path(__file__).parent / "cards.json", "r") as f:
+    with open(CARDS_DATA_FILE, "r") as f:
         cards = json.load(f)["data"]
     cards_by_set_code = {
         set["set_code"]: card for card in cards for set in card.get("card_sets", [])
     }
     return cards_by_set_code
+
 
 def capture_frame(
     cap: cv2.VideoCapture,
@@ -35,14 +62,12 @@ def capture_frame(
     if auto_focus:
         for _ in range(80):
             cap.read()
-        focus_value = cap.get(cv2.CAP_PROP_FOCUS)
-        pass
     else:
         cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
         cap.set(cv2.CAP_PROP_FOCUS, focus_value)
         for _ in range(10):
             cap.read()
- 
+
     ret, frame = cap.read()
     return frame if ret else None
 
@@ -62,8 +87,6 @@ def crop_card_id_region(
     x_end = int(w * x_end)
     return frame[y_start:y_end, x_start:x_end]
 
-
-CARD_ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
 
 def read_card_id(frame: cv2.typing.MatLike) -> str | None:
     """Find and read the card ID from a frame in a single OCR pass."""
@@ -86,24 +109,6 @@ def read_card_id(frame: cv2.typing.MatLike) -> str | None:
 
     _, best_text = min(candidates, key=lambda r: min(p[1] for p in r[0]))
     return best_text
-
-
-# Card IDs follow: 2-4 letters, hyphen, 2 letter language code, 3 digits
-CARD_ID_PATTERN = re.compile(r"^(\w+)-([A-Z]{2})(\d{3})$")
-
-DIGIT_TO_LETTER = str.maketrans("01৪568", "OIASEB")
-LETTER_TO_DIGIT = str.maketrans("OIASTEBZC", "014573870")
-
-
-OCR_SIMILAR = {
-    frozenset("1IL"): 0.2,
-    frozenset("0OQC"): 0.2,
-    frozenset("5S"): 0.2,
-    frozenset("8B"): 0.2,
-    frozenset("6G"): 0.3,
-    frozenset("2Z"): 0.3,
-    frozenset("UV"): 0.3,
-}
 
 
 def ocr_sub_cost(a: str, b: str) -> float:
@@ -131,9 +136,6 @@ def ocr_distance(s1: str, s2: str) -> float:
                 dp[i - 1][j - 1] + ocr_sub_cost(s1[i - 1], s2[j - 1]),
             )
     return dp[m][n]
-
-
-MAX_OCR_DISTANCE = 1.5
 
 
 def match_set_code(ocr_prefix: str) -> str:
@@ -188,9 +190,6 @@ def show_image(frame: cv2.typing.MatLike):
     cv2.destroyAllWindows()
 
 
-OUTPUT_FILE = "output.txt"
-
-
 def remove_last_entry():
     """Remove the last line from the output file."""
     try:
@@ -209,11 +208,6 @@ def remove_last_entry():
         print("  Nothing to remove")
 
 
-MOTION_THRESHOLD = 30.0
-SETTLE_THRESHOLD = 2.0
-STABLE_FRAMES_REQUIRED = 10
-
-
 def frame_diff(a: cv2.typing.MatLike, b: cv2.typing.MatLike) -> float:
     """Mean absolute difference between two frames (grayscale)."""
     g1 = cv2.cvtColor(a, cv2.COLOR_BGR2GRAY)
@@ -226,8 +220,6 @@ def main():
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 3840)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 2160)
-    actual_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-    actual_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
     for _ in range(80):
         cap.read()
 

@@ -1,0 +1,1 @@
+Data files taken from the YGOProDeck API https://ygoprodeck.com/api-guide/
