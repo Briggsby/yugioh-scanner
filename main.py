@@ -3,6 +3,7 @@ from pathlib import Path
 import msvcrt
 import re
 import json
+import urllib.request
 import winsound
 
 import cv2
@@ -12,8 +13,15 @@ import numpy as np
 CARD_ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
 CARD_ID_PATTERN = re.compile(r"^(\w+)-([A-Z]{2})(\d{3})$")
 
-DIGIT_TO_LETTER = str.maketrans("01৪568", "OIASEB")
-LETTER_TO_DIGIT = str.maketrans("OIASTEBZC", "014573870")
+# OCR misread corrections: maps characters that look similar
+# Supports multi-character replacements (e.g. H -> 11)
+LETTER_REPLACEMENTS = {
+    "0": "O", "1": "I", "4": "A", "5": "S", "6": "E", "8": "B",
+}
+DIGIT_REPLACEMENTS = {
+    "O": "0", "I": "1", "A": "4", "S": "5", "T": "1", "E": "3",
+    "B": "8", "Z": "7", "C": "0", "H": "11",
+}
 
 OCR_SIMILAR = {
     frozenset("1IL"): 0.2,
@@ -28,7 +36,7 @@ MAX_OCR_DISTANCE = 1.5
 
 MOTION_THRESHOLD = 30.0
 SETTLE_THRESHOLD = 2.0
-STABLE_FRAMES_REQUIRED = 10
+STABLE_FRAMES_REQUIRED = 5
 
 OUTPUT_FILE = "output.txt"
 CARDS_DATA_FILE = Path(__file__).parent / "data" / "cards.json"
@@ -177,17 +185,32 @@ def fix_card_id(raw: str) -> str:
 
     suffix = parts[1]
     if len(suffix) >= 2:
-        lang = suffix[:2].translate(DIGIT_TO_LETTER)
-        num = suffix[2:].translate(LETTER_TO_DIGIT)
+        lang = "".join(LETTER_REPLACEMENTS.get(c, c) for c in suffix[:2])
+        num = "".join(DIGIT_REPLACEMENTS.get(c, c) for c in suffix[2:])
         suffix = lang + num
 
     return f"{prefix}-{suffix}"
 
 
-def show_image(frame: cv2.typing.MatLike):
-    cv2.imshow("Image", frame)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+def show_card_image(card: dict):
+    """Download and display the card image in a window."""
+    images = card.get("card_images", [])
+    if not images:
+        return
+    url = images[0].get("image_url", "")
+    if not url:
+        return
+    try:
+        with urllib.request.urlopen(url) as resp:
+            img_data = np.frombuffer(resp.read(), dtype=np.uint8)
+        img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
+        if img is not None:
+            cv2.namedWindow("Last Scanned Card", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+            cv2.resizeWindow("Last Scanned Card", 500, 730)
+            cv2.imshow("Last Scanned Card", img)
+            cv2.waitKey(1)
+    except Exception:
+        pass
 
 
 def remove_last_entry():
@@ -236,6 +259,8 @@ def main():
             if not ret:
                 continue
 
+            cv2.waitKey(1)
+
             force_scan = False
             if msvcrt.kbhit():
                 key = msvcrt.getch()
@@ -273,6 +298,7 @@ def main():
                     with open(OUTPUT_FILE, "a") as f:
                         f.write(card_id + "\n")
                     winsound.Beep(1000, 200)
+                    show_card_image(card)
                 else:
                     print(f"  No card found for {card_id}")
                     winsound.Beep(400, 400)
